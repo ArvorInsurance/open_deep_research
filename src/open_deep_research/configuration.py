@@ -50,7 +50,8 @@ class Configuration:
     search_api_config: Optional[Dict[str, Any]] = None 
     
     # Multi-agent specific configuration
-    supervisor_model: str = "openai:gpt-4.1" # Model for supervisor agent in multi-agent setup
+    # supervisor_model: str = "openai:gpt-4.1" # Model for supervisor agent in multi-agent setup
+    supervisor_model: str = "openai:o3" # Model for supervisor agent in multi-agent setup
     researcher_model: str = "openai:gpt-4.1" # Model for research agents in multi-agent setup 
 
     @classmethod

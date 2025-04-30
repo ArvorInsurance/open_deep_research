@@ -168,7 +168,7 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
     for query in search_queries:
             search_tasks.append(
                 tavily_async_client.search(
-                    query,
+                    query[0:400],
                     max_results=max_results,
                     include_raw_content=include_raw_content,
                     topic=topic
@@ -1275,7 +1275,7 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
     search_results = await tavily_search_async(
         queries,
         max_results=max_results,
-        topic=topic,
+        topic="general",
         include_raw_content=True
     )
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+from langchain.globals import set_verbose
 from langgraph.graph import MessagesState
 
 from langgraph.types import Command, Send
@@ -12,6 +13,8 @@ from langgraph.graph import START, END, StateGraph
 from open_deep_research.configuration import Configuration
 from open_deep_research.utils import get_config_value, tavily_search, duckduckgo_search
 from open_deep_research.prompts import SUPERVISOR_INSTRUCTIONS, RESEARCH_INSTRUCTIONS
+
+set_verbose(True)
 
 ## Tools factory - will be initialized based on configuration
 def get_search_tool(config: RunnableConfig):
@@ -201,7 +204,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
         # Default case (for search tools, etc.)
         return Command(goto="supervisor", update={"messages": result})
 
-async def supervisor_should_continue(state: ReportState) -> Literal["supervisor_tools", END]:
+async def supervisor_should_continue(state: ReportState) -> Literal["supervisor", "supervisor_tools", END]:
     """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
 
     messages = state["messages"]
@@ -210,6 +213,9 @@ async def supervisor_should_continue(state: ReportState) -> Literal["supervisor_
     # If the LLM makes a tool call, then perform an action
     if last_message.tool_calls:
         return "supervisor_tools"
+    
+    if not state.get("final_report"):
+        return "supervisor"
     
     # Else end because the supervisor asked a question or is finished
     else:
@@ -322,6 +328,7 @@ supervisor_builder.add_conditional_edges(
     supervisor_should_continue,
     {
         # Name returned by should_continue : Name of next node to visit
+        "supervisor": "supervisor",
         "supervisor_tools": "supervisor_tools",
         END: END,
     },
