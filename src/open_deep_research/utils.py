@@ -136,7 +136,6 @@ Content:
 """
     return formatted_str
 
-@traceable
 async def tavily_search_async(search_queries, max_results: int = 5, topic: str = "general", include_raw_content: bool = True):
     """
     Performs concurrent web searches with the Tavily API
@@ -179,7 +178,6 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
     search_docs = await asyncio.gather(*search_tasks)
     return search_docs
 
-@traceable
 def perplexity_search(search_queries):
     """Search the web using the Perplexity API.
     
@@ -274,7 +272,6 @@ def perplexity_search(search_queries):
     
     return search_docs
 
-@traceable
 async def exa_search(search_queries, max_characters: Optional[int] = None, num_results=5, 
                      include_domains: Optional[List[str]] = None, 
                      exclude_domains: Optional[List[str]] = None,
@@ -477,7 +474,6 @@ async def exa_search(search_queries, max_characters: Optional[int] = None, num_r
     
     return search_docs
 
-@traceable
 async def arxiv_search_async(search_queries, load_max_docs=5, get_full_documents=True, load_all_available_meta=True):
     """
     Performs concurrent searches on arXiv using the ArxivRetriever.
@@ -634,7 +630,6 @@ async def arxiv_search_async(search_queries, load_max_docs=5, get_full_documents
     
     return search_docs
 
-@traceable
 async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_key=None, doc_content_chars_max=4000):
     """
     Performs concurrent searches on PubMed using the PubMedAPIWrapper.
@@ -782,7 +777,6 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
     
     return search_docs
 
-@traceable
 async def linkup_search(search_queries, depth: Optional[str] = "standard"):
     """
     Performs concurrent web searches using the Linkup API.
@@ -828,7 +822,6 @@ async def linkup_search(search_queries, depth: Optional[str] = "standard"):
 
     return search_results
 
-@traceable
 async def google_search_async(search_queries: Union[str, List[str]], max_results: int = 5, include_raw_content: bool = True):
     """
     Performs concurrent web searches using Google.

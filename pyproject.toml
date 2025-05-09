@@ -29,8 +29,10 @@ dependencies = [
     "langgraph_supervisor",
     "langchain_tavily",
     "pytest",
+    "pydantic",
     "httpx>=0.24.0",
-    "markdownify>=0.11.6"
+    "markdownify>=0.11.6",
+    "fastapi>=0.115.0",
 ]
 
 [project.optional-dependencies]

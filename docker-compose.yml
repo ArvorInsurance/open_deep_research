@@ -1,0 +1,12 @@
+services:
+  arvor_deep_research:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: open_deep_research
+    ports:
+      - "2024:2024"
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env

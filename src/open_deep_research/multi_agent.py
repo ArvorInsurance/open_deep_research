@@ -19,6 +19,7 @@ set_verbose(True)
 ## Tools factory - will be initialized based on configuration
 def get_search_tool(config: RunnableConfig):
     """Get the appropriate search tool based on configuration"""
+    print("get_search_tool invoked")
     configurable = Configuration.from_runnable_config(config)
     search_api = get_config_value(configurable.search_api)
 
@@ -92,18 +93,25 @@ class SectionOutputState(TypedDict):
 # Tool lists will be built dynamically based on configuration
 def get_supervisor_tools(config: RunnableConfig):
     """Get supervisor tools based on configuration"""
+    print("get_supervisor_tools invoked")
     search_tool = get_search_tool(config)
     tool_list = [search_tool, Sections, Introduction, Conclusion]
     return tool_list, {tool.name: tool for tool in tool_list}
 
 def get_research_tools(config: RunnableConfig):
     """Get research tools based on configuration"""
+    print("get_research_tools invoked")
     search_tool = get_search_tool(config)
     tool_list = [search_tool, Section]
     return tool_list, {tool.name: tool for tool in tool_list}
 
 async def supervisor(state: ReportState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
+
+    print("supervisor invoked")
+    print("Message: ", state["messages"][-1])
+    print("Completed sections: ", len(state.get("completed_sections", [])))
+    print("Final report: ", len(state.get("final_report", "")))
 
     # Messages
     messages = state["messages"]
@@ -223,6 +231,11 @@ async def supervisor_should_continue(state: ReportState) -> Literal["supervisor"
 
 async def research_agent(state: SectionState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
+
+    print("research_agent invoked")
+    print("Messages: ", len(state["messages"]))
+    print("Section: ", len(state["section"]))
+    print("Completed sections: ", len(state.get("completed_sections", [])))
     
     # Get configuration
     configurable = Configuration.from_runnable_config(config)

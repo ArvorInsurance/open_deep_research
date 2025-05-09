@@ -23,67 +23,25 @@ Then edit the `.env` file to customize the environment variables (for model sele
 cp .env.example .env
 ```
 
-Launch the assistant with the LangGraph server locally, which will open in your browser:
-
-#### Mac
-
+Launch the assistant with the docker-compose command:
 ```bash
-# Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies and start the LangGraph server
-uvx --refresh --from "langgraph-cli[inmem]" --with-editable . --python 3.11 langgraph dev --allow-blocking
+docker-compose up
 ```
-
-#### Windows / Linux
-
-```powershell
-# Install dependencies 
-pip install -e .
-pip install -U "langgraph-cli[inmem]" 
-
-# Start the LangGraph server
-langgraph dev
-```
-
-Use this to open the Studio UI:
-```
-- 🚀 API: http://127.0.0.1:2024
-- 🎨 Studio UI: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
-- 📚 API Docs: http://127.0.0.1:2024/docs
-```
-
 #### Multi-agent
 
 (1) Chat with the agent about your topic of interest, and it will initiate report generation:
 
-<img width="1326" alt="input" src="https://github.com/user-attachments/assets/dc8f59dd-14b3-4a62-ac18-d2f99c8bbe83" />
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "What is the impact of climate change on biodiversity?",
+  }' \
+  http://localhost:2024/research
+```
 
-(2) The report is produced as markdown.
-
-#### Workflow
-
-(1) Provide a `Topic`:
-
-<img width="1326" alt="input" src="https://github.com/user-attachments/assets/de264b1b-8ea5-4090-8e72-e1ef1230262f" />
-
-(2) This will generate a report plan and present it to the user for review.
-
-(3) We can pass a string (`"..."`) with feedback to regenerate the plan based on the feedback.
-
-<img width="1326" alt="feedback" src="https://github.com/user-attachments/assets/c308e888-4642-4c74-bc78-76576a2da919" />
-
-(4) Or, we can just pass `true` to the JSON input box in Studio accept the plan.
-
-<img width="1480" alt="accept" src="https://github.com/user-attachments/assets/ddeeb33b-fdce-494f-af8b-bd2acc1cef06" />
-
-(5) Once accepted, the report sections will be generated.
-
-<img width="1326" alt="report_gen" src="https://github.com/user-attachments/assets/74ff01cc-e7ed-47b8-bd0c-4ef615253c46" />
-
-The report is produced as markdown.
-
-<img width="1326" alt="report" src="https://github.com/user-attachments/assets/92d9f7b7-3aea-4025-be99-7fb0d4b47289" />
+(2) You can also use the multi-agent implementation with the LangGraph server:
+```bash
 
 ### Search Tools
 
