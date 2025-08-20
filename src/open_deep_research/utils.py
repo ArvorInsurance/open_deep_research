@@ -162,6 +162,10 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
                     ]
                 }
     """
+    print(f"Tavily search: Executing {len(search_queries)} queries with max_results={max_results}, topic='{topic}', include_raw_content={include_raw_content}")
+    for i, query in enumerate(search_queries):
+        print(f"Tavily search query {i+1}: '{query[:400]}{'...' if len(query) > 400 else ''}'")
+    
     tavily_async_client = AsyncTavilyClient()
     search_tasks = []
     for query in search_queries:
@@ -176,6 +180,7 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
 
     # Execute all searches concurrently
     search_docs = await asyncio.gather(*search_tasks)
+    print(f"Tavily search: Completed {len(search_docs)} searches")
     return search_docs
 
 def perplexity_search(search_queries):
@@ -1264,6 +1269,9 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
     Returns:
         str: A formatted string of search results
     """
+    print(f"Tavily search tool: Starting search with {len(queries)} queries")
+    print(f"Tavily search tool: Parameters - max_results={max_results}, topic='{topic}'")
+    
     # Use tavily_search_async with include_raw_content=True to get content directly
     search_results = await tavily_search_async(
         queries,
@@ -1283,6 +1291,8 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
             if url not in unique_results:
                 unique_results[url] = result
     
+    print(f"Tavily search tool: Found {len(unique_results)} unique results after deduplication")
+    
     # Format the unique results
     for i, (url, result) in enumerate(unique_results.items()):
         formatted_output += f"\n\n--- SOURCE {i+1}: {result['title']} ---\n"
@@ -1293,8 +1303,10 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
         formatted_output += "\n\n" + "-" * 80 + "\n"
     
     if unique_results:
+        print(f"Tavily search tool: Returning formatted results with {len(unique_results)} sources")
         return formatted_output
     else:
+        print("Tavily search tool: No valid search results found")
         return "No valid search results found. Please try different search queries or use a different search API."
 
 async def select_and_execute_search(search_api: str, query_list: list[str], params_to_pass: dict) -> str:
@@ -1313,6 +1325,7 @@ async def select_and_execute_search(search_api: str, query_list: list[str], para
     """
     if search_api == "tavily":
         # Tavily search tool used with both workflow and agent 
+        print(f"select_and_execute_search: Using Tavily search API with {len(query_list)} queries and params: {params_to_pass}")
         return await tavily_search.ainvoke({'queries': query_list}, **params_to_pass)
     elif search_api == "duckduckgo":
         # DuckDuckGo search tool used with both workflow and agent 
