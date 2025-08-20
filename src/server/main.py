@@ -21,4 +21,5 @@ async def run_langgraph_endpoint(user_message: UserMessage):
         graph_state = await graph.ainvoke(initial_state)
         return JSONResponse(content=graph_state)
     except Exception as e:
+        print(f"Error occurred performing research:", e)
         raise HTTPException(status_code=500, detail=str(e))
