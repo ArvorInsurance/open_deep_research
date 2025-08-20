@@ -44,6 +44,10 @@ jobs:
           TASK_DEF_NAME=research-task
           CLUSTER=arvor-back-office
           SERVICE=research-task-service-6pr6cyds
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          IMAGE_TAG=$COMMIT_SHA
+          ECR_REPO=arvor/research
+          ECR_URI=$ACCOUNT_ID.dkr.ecr.us-east-2.amazonaws.com/$ECR_REPO
 
           # Fetch current task definition
           aws ecs describe-task-definition --task-definition $TASK_DEF_NAME > taskdef.json
