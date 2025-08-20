@@ -123,15 +123,6 @@ class SectionState(MessagesState):
 class SectionOutputState(TypedDict):
     completed_sections: list[Section] # Final key we duplicate in outer state for Send() API
 
-## Helper functions
-def has_research_feedback(state: SectionState) -> bool:
-    """Check if there's research review feedback"""
-    return bool(state.get("research_feedback", "").strip())
-
-def get_research_feedback(state: SectionState) -> str:
-    """Get research review feedback"""
-    return state.get("research_feedback", "")
-
 # Tool lists will be built dynamically based on configuration
 def get_supervisor_tools(config: RunnableConfig):
     """Get supervisor tools based on configuration"""
