@@ -305,6 +305,7 @@ async def research_agent(state: SectionState, config: RunnableConfig):
     print(f"   - Messages: {len(state['messages'])}")
     print(f"   - Section: {state['section']}")
     print(f"   - Completed sections: {len(state.get('completed_sections', []))}")
+    print(f"   - Needs research review: {state.get('needs_research_review')}")
     
     # Get configuration
     configurable = Configuration.from_runnable_config(config)
@@ -332,15 +333,27 @@ async def research_agent(state: SectionState, config: RunnableConfig):
         if completed_sections:
             system_instructions = RESEARCH_REVIEW_INSTRUCTIONS
             print("   - Using RESEARCH_REVIEW_INSTRUCTIONS for initial quality review")
+            # Add a message to guide the LLM to review the completed section
+            review_message = {"role": "user", "content": f"Please review the completed section for quality and completeness. Section content:\n\n{completed_sections[0].content}"}
+            messages = state["messages"] + [review_message]
         else:
             system_instructions = RESEARCH_INSTRUCTIONS.format(section_description=state["section"])
             print("   - Using RESEARCH_INSTRUCTIONS for normal research (first time)")
+            messages = state["messages"]
     elif needs_review:
         system_instructions = RESEARCH_REVIEW_INSTRUCTIONS
         print("   - Using RESEARCH_REVIEW_INSTRUCTIONS for quality improvement")
+        # Add feedback context if available
+        feedback = state.get("research_feedback", "")
+        if feedback:
+            feedback_message = {"role": "user", "content": f"Previous feedback: {feedback}\n\nPlease address this feedback and improve the section."}
+            messages = state["messages"] + [feedback_message]
+        else:
+            messages = state["messages"]
     else:
         system_instructions = RESEARCH_INSTRUCTIONS.format(section_description=state["section"])
         print("   - Using RESEARCH_INSTRUCTIONS for normal research")
+        messages = state["messages"]
     
     return {
         "messages": [
@@ -351,7 +364,7 @@ async def research_agent(state: SectionState, config: RunnableConfig):
                      "content": system_instructions
                     }
                 ]
-                + state["messages"]
+                + messages
             )
         ]
     }
@@ -400,8 +413,9 @@ async def research_agent_tools(state: SectionState, config: RunnableConfig):
     if completed_section:
         print(f"📝 SECTION COMPLETED: {completed_section.name}")
         # Normal research mode - section completed and will be reviewed by research review agent
-        print("📋 SECTION COMPLETED - Returning to research review agent")
-        return {"messages": result, "completed_sections": [completed_section]}
+        print("📋 SECTION COMPLETED - Setting up for research review")
+        # Set needs_research_review to None to trigger review mode on next iteration
+        return {"messages": result, "completed_sections": [completed_section], "needs_research_review": None}
     else:
         if research_review:
             if research_review.needs_more_research:
@@ -426,6 +440,17 @@ async def research_agent_should_continue(state: SectionState) -> Literal["resear
     if last_message.tool_calls:
         return "research_agent_tools"
 
+    # If we're in review mode and no tool was called, we should continue to give the LLM another chance
+    # This prevents the flow from stopping when the LLM doesn't immediately call ResearchReview
+    needs_review = state.get("needs_research_review")
+    completed_sections = state.get("completed_sections", [])
+    
+    if needs_review is None and completed_sections:
+        print("🔍 In review mode but no tool called - continuing to give LLM another chance")
+        return "research_agent_tools"
+    elif needs_review is True:
+        print("🔍 In improvement mode but no tool called - continuing to give LLM another chance")
+        return "research_agent_tools"
     else:
         return END
     
