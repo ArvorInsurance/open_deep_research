@@ -140,9 +140,8 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
 
     print("supervisor invoked")
-    print("Messages: ", len(state["messages"]))
+    print("Message Length: ", len(state["messages"]))
     print("Last message: ", state["messages"][-1])
-    # print("Message: ", state["messages"][-1])
     print("Completed sections: ", len(state.get("completed_sections", [])))
     print("Final report: ", len(state.get("final_report", "")))
 
