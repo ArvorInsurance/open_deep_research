@@ -48,19 +48,16 @@ jobs:
           # Fetch current task definition
           aws ecs describe-task-definition --task-definition $TASK_DEF_NAME > taskdef.json
 
-          # Update container image to new image
-          jq '.taskDefinition.containerDefinitions[0].image="'$ECR_URI:$IMAGE_TAG'"' taskdef.json > new-taskdef.json
+          # Extract and clean
+          jq '.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' taskdef.json > final-taskdef.json
 
-          # Remove fields that are not allowed in register-task-definition
-          jq 'del(.taskDefinition.taskDefinitionArn, .taskDefinition.revision, .taskDefinition.status, .taskDefinition.requiresAttributes, .taskDefinition.compatibilities, .taskDefinition.registeredAt, .taskDefinition.registeredBy)' new-taskdef.json > final-taskdef.json
+          # Update container image
+          jq '.containerDefinitions[0].image="'$ECR_URI:$IMAGE_TAG'"' final-taskdef.json > final-taskdef-updated.json
 
           # Register new task definition
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://final-taskdef.json \
+            --cli-input-json file://final-taskdef-updated.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
 
-          echo "Registered new task definition: $NEW_TASK_DEF_ARN"
-
-          # Update ECS service to use the new task definition
+          # Update service
           aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_TASK_DEF_ARN
-          echo "ECS service updated to new task definition"
