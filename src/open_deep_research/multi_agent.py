@@ -74,6 +74,18 @@ class Conclusion(BaseModel):
         description="The content of the conclusion, summarizing the report."
     )
 
+@tool
+class SectionReview(BaseModel):
+    sections: List[str] = Field(
+        description="List of report sections to review.",
+    )
+    feedback: str = Field(
+        description="Feedback on the quality and appropriateness of the sections.",
+    )
+    is_approved: bool = Field(
+        description="Whether the sections meet the quality standards and should proceed to research.",
+    )
+
 ## State
 class ReportStateOutput(TypedDict):
     final_report: str # Final report
@@ -82,6 +94,7 @@ class ReportState(MessagesState):
     sections: list[str] # List of report sections 
     completed_sections: Annotated[list, operator.add] # Send() API key
     final_report: str # Final report
+    section_reviewed: bool # Whether sections have been reviewed
 
 class SectionState(MessagesState):
     section: str # Report section  
@@ -95,7 +108,7 @@ def get_supervisor_tools(config: RunnableConfig):
     """Get supervisor tools based on configuration"""
     print("get_supervisor_tools invoked")
     search_tool = get_search_tool(config)
-    tool_list = [search_tool, Sections, Introduction, Conclusion]
+    tool_list = [search_tool, Sections, Introduction, Conclusion, SectionReview]
     return tool_list, {tool.name: tool for tool in tool_list}
 
 def get_research_tools(config: RunnableConfig):
@@ -109,7 +122,9 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
 
     print("supervisor invoked")
-    print("Message: ", state["messages"][-1])
+    print("Messages: ", len(state["messages"]))
+    print("Last message: ", state["messages"][-1])
+    # print("Message: ", state["messages"][-1])
     print("Completed sections: ", len(state.get("completed_sections", [])))
     print("Final report: ", len(state.get("final_report", "")))
 
@@ -127,6 +142,11 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     if state.get("completed_sections") and not state.get("final_report"):
         research_complete_message = {"role": "user", "content": "Research is complete. Now write the introduction and conclusion for the report. Here are the completed main body sections: \n\n" + "\n\n".join([s.content for s in state["completed_sections"]])}
         messages = messages + [research_complete_message]
+    
+    # Check if sections were just generated and need review
+    if state.get("sections") and not state.get("section_reviewed"):
+        review_message = {"role": "user", "content": "Sections have been generated. Please review them for quality and appropriateness using the SectionReview tool before proceeding to research."}
+        messages = messages + [review_message]
 
     # Get tools based on configuration
     supervisor_tool_list, _ = get_supervisor_tools(config)
@@ -152,6 +172,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
     sections_list = []
     intro_content = None
     conclusion_content = None
+    section_review = None
 
     # Get tools based on configuration
     _, supervisor_tools_by_name = get_supervisor_tools(config)
@@ -175,6 +196,8 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
         # Store special tool results for processing after all tools have been called
         if tool_call["name"] == "Sections":
             sections_list = observation.sections
+        elif tool_call["name"] == "SectionReview":
+            section_review = observation
         elif tool_call["name"] == "Introduction":
             # Format introduction with proper H1 heading if not already formatted
             if not observation.content.startswith("# "):
@@ -189,15 +212,34 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
                 conclusion_content = observation.content
     
     # After processing all tool calls, decide what to do next
-    if sections_list:
-        # Send the sections to the research agents
-        return Command(goto=[Send("research_team", {"section": s}) for s in sections_list], update={"messages": result})
+    if sections_list and not section_review:
+        # First time generating sections - need to review them
+        print("Sections generated, need to review before proceeding")
+        # Add a message to guide the LLM to review the sections
+        result.append({"role": "user", "content": f"Please review these proposed sections for quality and appropriateness:\n\n" + "\n".join([f"{i+1}. {s}" for i, s in enumerate(sections_list)])})
+        return Command(goto="supervisor", update={"sections": sections_list, "messages": result})
+    elif section_review:
+        if section_review.is_approved:
+            # Sections approved - proceed to research
+            print("Sections approved, sending to research agents")
+            for i, s in enumerate(section_review.sections):
+                print(f"Section {i}: {s}")
+            return Command(goto=[Send("research_team", {"section": s}) for s in section_review.sections], update={"section_reviewed": True, "messages": result})
+        else:
+            # Sections not approved - need to regenerate
+            print("Sections not approved, need to regenerate")
+            result.append({"role": "user", "content": f"Sections were not approved. Feedback: {section_review.feedback}\n\nPlease regenerate the sections based on this feedback."})
+            return Command(goto="supervisor", update={"sections": [], "section_reviewed": False, "messages": result})
     elif intro_content:
+        print("Sending introduction to supervisor")
+        print("Introduction: ", intro_content)
         # Store introduction while waiting for conclusion
         # Append to messages to guide the LLM to write conclusion next
         result.append({"role": "user", "content": "Introduction written. Now write a conclusion section."})
         return Command(goto="supervisor", update={"final_report": intro_content, "messages": result})
     elif conclusion_content:
+        print("Sending conclusion to supervisor")
+        print("Conclusion: ", conclusion_content)
         # Get all sections and combine in proper order: Introduction, Body Sections, Conclusion
         intro = state.get("final_report", "")
         body_sections = "\n\n".join([s.content for s in state["completed_sections"]])
@@ -209,6 +251,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
         result.append({"role": "user", "content": "Report is now complete with introduction, body sections, and conclusion."})
         return Command(goto="supervisor", update={"final_report": complete_report, "messages": result})
     else:
+        print("No sections, introduction, or conclusion to send to supervisor")
         # Default case (for search tools, etc.)
         return Command(goto="supervisor", update={"messages": result})
 
@@ -291,9 +334,11 @@ async def research_agent_tools(state: SectionState, config: RunnableConfig):
     
     # After processing all tools, decide what to do next
     if completed_section:
+        print("Completed section: ", completed_section)
         # Write the completed section to state and return to the supervisor
         return {"messages": result, "completed_sections": [completed_section]}
     else:
+        print("No completed section to send to supervisor")
         # Continue the research loop for search tools, etc.
         return {"messages": result}
 
