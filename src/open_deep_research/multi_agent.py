@@ -12,7 +12,7 @@ from langgraph.graph import START, END, StateGraph
 
 from open_deep_research.configuration import Configuration
 from open_deep_research.utils import get_config_value, tavily_search, duckduckgo_search
-from open_deep_research.prompts import SUPERVISOR_INSTRUCTIONS, RESEARCH_INSTRUCTIONS
+from open_deep_research.prompts import SUPERVISOR_INSTRUCTIONS, RESEARCH_INSTRUCTIONS, SECTION_REVIEW_INSTRUCTIONS, RESEARCH_REVIEW_INSTRUCTIONS
 
 set_verbose(True)
 
@@ -117,9 +117,20 @@ class ReportState(MessagesState):
 class SectionState(MessagesState):
     section: str # Report section  
     completed_sections: list[Section] # Final key we duplicate in outer state for Send() API
+    needs_research_review: bool # Whether the section needs research review
+    research_feedback: str # Feedback from research review for improvement
 
 class SectionOutputState(TypedDict):
     completed_sections: list[Section] # Final key we duplicate in outer state for Send() API
+
+## Helper functions
+def has_research_feedback(state: SectionState) -> bool:
+    """Check if there's research review feedback"""
+    return bool(state.get("research_feedback", "").strip())
+
+def get_research_feedback(state: SectionState) -> str:
+    """Get research review feedback"""
+    return state.get("research_feedback", "")
 
 # Tool lists will be built dynamically based on configuration
 def get_supervisor_tools(config: RunnableConfig):
@@ -162,8 +173,13 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     
     # Check if sections were just generated and need review
     if state.get("sections") and not state.get("section_reviewed"):
-        review_message = {"role": "user", "content": "Sections have been generated. Please review them for quality and appropriateness using the SectionReview tool before proceeding to research."}
+        # Use SECTION_REVIEW_INSTRUCTIONS when reviewing sections
+        system_instructions = SECTION_REVIEW_INSTRUCTIONS
+        review_message = {"role": "user", "content": f"Sections have been generated. Please review these sections for quality and appropriateness:\n\n" + "\n".join([f"{i+1}. {s}" for i, s in enumerate(state["sections"])])}
         messages = messages + [review_message]
+    else:
+        # Use SUPERVISOR_INSTRUCTIONS for normal operations
+        system_instructions = SUPERVISOR_INSTRUCTIONS
 
     # Get tools based on configuration
     supervisor_tool_list, _ = get_supervisor_tools(config)
@@ -174,7 +190,7 @@ async def supervisor(state: ReportState, config: RunnableConfig):
             await llm.bind_tools(supervisor_tool_list).ainvoke(
                 [
                     {"role": "system",
-                     "content": SUPERVISOR_INSTRUCTIONS,
+                     "content": system_instructions,
                     }
                 ]
                 + messages
@@ -239,12 +255,14 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
         if section_review.is_approved:
             # Sections approved - proceed to research
             print("Sections approved, sending to research agents")
+            print("Sections approved feedback: ", section_review.feedback)
             for i, s in enumerate(section_review.sections):
                 print(f"Section {i}: {s}")
             return Command(goto=[Send("research_team", {"section": s}) for s in section_review.sections], update={"section_reviewed": True, "messages": result})
         else:
             # Sections not approved - need to regenerate
             print("Sections not approved, need to regenerate")
+            print("Sections not approved feedback: ", section_review.feedback)
             result.append({"role": "user", "content": f"Sections were not approved. Feedback: {section_review.feedback}\n\nPlease regenerate the sections based on this feedback."})
             return Command(goto="supervisor", update={"sections": [], "section_reviewed": False, "messages": result})
     elif intro_content:
@@ -309,13 +327,37 @@ async def research_agent(state: SectionState, config: RunnableConfig):
     
     print(f"   - Available tools: {[tool.name for tool in research_tool_list]}")
     
+    # Check if we need to use RESEARCH_REVIEW_INSTRUCTIONS
+    # Logic:
+    # 1. If needs_research_review is not set (None) - first time, do research review after section completion
+    # 2. If needs_research_review is True - continue research review (improvement mode)
+    # 3. If needs_research_review is False - normal research mode
+    
+    needs_review = state.get("needs_research_review")
+    
+    if needs_review is None:
+        # First time - check if we have completed sections to review
+        completed_sections = state.get("completed_sections", [])
+        if completed_sections:
+            system_instructions = RESEARCH_REVIEW_INSTRUCTIONS
+            print("   - Using RESEARCH_REVIEW_INSTRUCTIONS for initial quality review")
+        else:
+            system_instructions = RESEARCH_INSTRUCTIONS.format(section_description=state["section"])
+            print("   - Using RESEARCH_INSTRUCTIONS for normal research (first time)")
+    elif needs_review:
+        system_instructions = RESEARCH_REVIEW_INSTRUCTIONS
+        print("   - Using RESEARCH_REVIEW_INSTRUCTIONS for quality improvement")
+    else:
+        system_instructions = RESEARCH_INSTRUCTIONS.format(section_description=state["section"])
+        print("   - Using RESEARCH_INSTRUCTIONS for normal research")
+    
     return {
         "messages": [
             # Enforce tool calling to either perform more search or call the Section tool to write the section
             await llm.bind_tools(research_tool_list).ainvoke(
                 [
                     {"role": "system",
-                     "content": RESEARCH_INSTRUCTIONS.format(section_description=state["section"])
+                     "content": system_instructions
                     }
                 ]
                 + state["messages"]
@@ -363,37 +405,25 @@ async def research_agent_tools(state: SectionState, config: RunnableConfig):
             print(f"   - Feedback: {observation.feedback}")
     
     # After processing all tools, decide what to do next
+    print(f"🔍 DECISION LOGIC - completed_section: {completed_section is not None}, research_review: {research_review is not None}")
     if completed_section:
-        if research_review and not research_review.is_approved:
-            # Section completed but quality not approved - continue research
-            print(f"❌ RESEARCH REVIEW FAILED - Quality Issues Found!")
-            print(f"   - Section: {completed_section.name}")
-            print(f"   - Feedback: {research_review.feedback}")
-            
-            if research_review.needs_more_research:
-                print("🔄 MORE RESEARCH NEEDED - Continuing research loop...")
-                # Add feedback message to guide further research
-                result.append({"role": "user", "content": f"Section quality needs improvement. Please conduct more research based on this feedback: {research_review.feedback}"})
-                return {"messages": result}
-            else:
-                # Quality issues that don't require more research - return to supervisor
-                print("⚠️  WRITING ISSUES DETECTED - Returning to supervisor with quality concerns")
-                return {"messages": result, "completed_sections": [completed_section]}
-        else:
-            # Section completed and quality approved (or no review performed)
-            if research_review and research_review.is_approved:
-                print(f"✅ RESEARCH REVIEW PASSED - Section quality approved!")
-                print(f"   - Section: {completed_section.name}")
-            else:
-                print(f"📋 NO RESEARCH REVIEW PERFORMED - Section completed without review")
-                print(f"   - Section: {completed_section.name}")
-            
-            # Write the completed section to state and return to the supervisor
-            return {"messages": result, "completed_sections": [completed_section]}
+        print(f"📝 SECTION COMPLETED: {completed_section.name}")
+        # Normal research mode - section completed and will be reviewed by research review agent
+        print("📋 SECTION COMPLETED - Returning to research review agent")
+        return {"messages": result, "completed_sections": [completed_section]}
     else:
-        print("🔍 NO SECTION COMPLETED - Continuing research...")
-        # Continue the research loop for search tools, etc.
-        return {"messages": result}
+        if research_review:
+            if research_review.needs_more_research:
+                # Keep the research_review in state to continue the research loop
+                print("🔍 Needs more research, continuing research loop")
+                return {"messages": result, "needs_research_review": True, "research_feedback": research_review.feedback}
+            else:
+                print("Research review passed, returning to supervisor")
+                return {"messages": result, "needs_research_review": False, "research_feedback": research_review.feedback}
+        else:  
+            print("🔍 NO SECTION COMPLETED - Continuing research...")
+            # Continue the research loop for search tools, etc.
+            return {"messages": result}
 
 async def research_agent_should_continue(state: SectionState) -> Literal["research_agent_tools", END]:
     """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
