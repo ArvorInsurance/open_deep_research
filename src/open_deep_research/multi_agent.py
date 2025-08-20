@@ -191,6 +191,8 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
     # After processing all tool calls, decide what to do next
     if sections_list:
         # Send the sections to the research agents
+        for i, section in enumerate(sections_list):
+            print(f"Sending section{i}: {section} to research team")
         return Command(goto=[Send("research_team", {"section": s}) for s in sections_list], update={"messages": result})
     elif intro_content:
         # Store introduction while waiting for conclusion
