@@ -86,6 +86,24 @@ class SectionReview(BaseModel):
         description="Whether the sections meet the quality standards and should proceed to research.",
     )
 
+@tool
+class ResearchReview(BaseModel):
+    section_name: str = Field(
+        description="Name of the section being reviewed.",
+    )
+    section_content: str = Field(
+        description="Content of the research section to review.",
+    )
+    feedback: str = Field(
+        description="Feedback on the research quality and completeness.",
+    )
+    is_approved: bool = Field(
+        description="Whether the research output meets quality standards.",
+    )
+    needs_more_research: bool = Field(
+        description="Whether more research is needed to improve the section.",
+    )
+
 ## State
 class ReportStateOutput(TypedDict):
     final_report: str # Final report
@@ -115,7 +133,7 @@ def get_research_tools(config: RunnableConfig):
     """Get research tools based on configuration"""
     print("get_research_tools invoked")
     search_tool = get_search_tool(config)
-    tool_list = [search_tool, Section]
+    tool_list = [search_tool, Section, ResearchReview]
     return tool_list, {tool.name: tool for tool in tool_list}
 
 async def supervisor(state: ReportState, config: RunnableConfig):
@@ -275,10 +293,10 @@ async def supervisor_should_continue(state: ReportState) -> Literal["supervisor"
 async def research_agent(state: SectionState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
 
-    print("research_agent invoked")
-    print("Messages: ", len(state["messages"]))
-    print("Section: ", len(state["section"]))
-    print("Completed sections: ", len(state.get("completed_sections", [])))
+    print("🔬 RESEARCH AGENT INVOKED")
+    print(f"   - Messages: {len(state['messages'])}")
+    print(f"   - Section: {state['section']}")
+    print(f"   - Completed sections: {len(state.get('completed_sections', []))}")
     
     # Get configuration
     configurable = Configuration.from_runnable_config(config)
@@ -289,6 +307,8 @@ async def research_agent(state: SectionState, config: RunnableConfig):
 
     # Get tools based on configuration
     research_tool_list, _ = get_research_tools(config)
+    
+    print(f"   - Available tools: {[tool.name for tool in research_tool_list]}")
     
     return {
         "messages": [
@@ -307,8 +327,11 @@ async def research_agent(state: SectionState, config: RunnableConfig):
 async def research_agent_tools(state: SectionState, config: RunnableConfig):
     """Performs the tool call and route to supervisor or continue the research loop"""
 
+    print("🛠️  RESEARCH AGENT TOOLS - Processing tool calls...")
+    
     result = []
     completed_section = None
+    research_review = None
     
     # Get tools based on configuration
     _, research_tools_by_name = get_research_tools(config)
@@ -331,14 +354,45 @@ async def research_agent_tools(state: SectionState, config: RunnableConfig):
         # Store the section observation if a Section tool was called
         if tool_call["name"] == "Section":
             completed_section = observation
+            print(f"📝 SECTION TOOL CALLED - Section completed: {observation.name}")
+        elif tool_call["name"] == "ResearchReview":
+            research_review = observation
+            print(f"🔍 RESEARCH REVIEW TOOL CALLED!")
+            print(f"   - Section: {observation.section_name}")
+            print(f"   - Approved: {observation.is_approved}")
+            print(f"   - Needs More Research: {observation.needs_more_research}")
+            print(f"   - Feedback: {observation.feedback}")
     
     # After processing all tools, decide what to do next
     if completed_section:
-        print("Completed section: ", completed_section)
-        # Write the completed section to state and return to the supervisor
-        return {"messages": result, "completed_sections": [completed_section]}
+        if research_review and not research_review.is_approved:
+            # Section completed but quality not approved - continue research
+            print(f"❌ RESEARCH REVIEW FAILED - Quality Issues Found!")
+            print(f"   - Section: {completed_section.name}")
+            print(f"   - Feedback: {research_review.feedback}")
+            
+            if research_review.needs_more_research:
+                print("🔄 MORE RESEARCH NEEDED - Continuing research loop...")
+                # Add feedback message to guide further research
+                result.append({"role": "user", "content": f"Section quality needs improvement. Please conduct more research based on this feedback: {research_review.feedback}"})
+                return {"messages": result}
+            else:
+                # Quality issues that don't require more research - return to supervisor
+                print("⚠️  WRITING ISSUES DETECTED - Returning to supervisor with quality concerns")
+                return {"messages": result, "completed_sections": [completed_section]}
+        else:
+            # Section completed and quality approved (or no review performed)
+            if research_review and research_review.is_approved:
+                print(f"✅ RESEARCH REVIEW PASSED - Section quality approved!")
+                print(f"   - Section: {completed_section.name}")
+            else:
+                print(f"📋 NO RESEARCH REVIEW PERFORMED - Section completed without review")
+                print(f"   - Section: {completed_section.name}")
+            
+            # Write the completed section to state and return to the supervisor
+            return {"messages": result, "completed_sections": [completed_section]}
     else:
-        print("No completed section to send to supervisor")
+        print("🔍 NO SECTION COMPLETED - Continuing research...")
         # Continue the research loop for search tools, etc.
         return {"messages": result}
 
