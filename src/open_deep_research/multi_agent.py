@@ -1,5 +1,6 @@
 from typing import List, Annotated, TypedDict, operator, Literal
 from pydantic import BaseModel, Field
+import logging
 
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
@@ -14,24 +15,38 @@ from open_deep_research.configuration import Configuration
 from open_deep_research.utils import get_config_value, tavily_search, duckduckgo_search
 from open_deep_research.prompts import SUPERVISOR_INSTRUCTIONS, RESEARCH_INSTRUCTIONS
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('multi_agent.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 set_verbose(True)
 
 ## Tools factory - will be initialized based on configuration
 def get_search_tool(config: RunnableConfig):
     """Get the appropriate search tool based on configuration"""
-    print("get_search_tool invoked")
+    logger.info("get_search_tool invoked")
     configurable = Configuration.from_runnable_config(config)
     search_api = get_config_value(configurable.search_api)
 
     # TODO: Configure other search functions as tools
     if search_api.lower() == "tavily":
         # Use Tavily search tool
+        logger.info(f"Using Tavily search API")
         return tavily_search
     elif search_api.lower() == "duckduckgo":
         # Use the DuckDuckGo search tool
+        logger.info(f"Using DuckDuckGo search API")
         return duckduckgo_search
     else:
         # Raise NotImplementedError for search APIs other than Tavily
+        logger.error(f"Unsupported search API: {search_api}")
         raise NotImplementedError(
             f"The search API '{search_api}' is not yet supported in the multi-agent implementation. "
             f"Currently, only Tavily is supported. Please use the graph-based implementation in "
@@ -93,14 +108,14 @@ class SectionOutputState(TypedDict):
 # Tool lists will be built dynamically based on configuration
 def get_supervisor_tools(config: RunnableConfig):
     """Get supervisor tools based on configuration"""
-    print("get_supervisor_tools invoked")
+    logger.info("get_supervisor_tools invoked")
     search_tool = get_search_tool(config)
     tool_list = [search_tool, Sections, Introduction, Conclusion]
     return tool_list, {tool.name: tool for tool in tool_list}
 
 def get_research_tools(config: RunnableConfig):
     """Get research tools based on configuration"""
-    print("get_research_tools invoked")
+    logger.info("get_research_tools invoked")
     search_tool = get_search_tool(config)
     tool_list = [search_tool, Section]
     return tool_list, {tool.name: tool for tool in tool_list}
@@ -108,10 +123,10 @@ def get_research_tools(config: RunnableConfig):
 async def supervisor(state: ReportState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
 
-    print("supervisor invoked")
-    print("Message: ", state["messages"][-1])
-    print("Completed sections: ", len(state.get("completed_sections", [])))
-    print("Final report: ", len(state.get("final_report", "")))
+    logger.info("supervisor invoked")
+    logger.debug(f"Message: {state['messages'][-1]}")
+    logger.debug(f"Completed sections: {len(state.get('completed_sections', []))}")
+    logger.debug(f"Final report length: {len(state.get('final_report', ''))}")
 
     # Messages
     messages = state["messages"]
@@ -125,6 +140,7 @@ async def supervisor(state: ReportState, config: RunnableConfig):
     
     # If sections have been completed, but we don't yet have the final report, then we need to initiate writing the introduction and conclusion
     if state.get("completed_sections") and not state.get("final_report"):
+        logger.info("Research complete, initiating introduction and conclusion writing")
         research_complete_message = {"role": "user", "content": "Research is complete. Now write the introduction and conclusion for the report. Here are the completed main body sections: \n\n" + "\n\n".join([s.content for s in state["completed_sections"]])}
         messages = messages + [research_complete_message]
 
@@ -192,15 +208,17 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
     if sections_list:
         # Send the sections to the research agents
         for i, section in enumerate(sections_list):
-            print(f"Sending section{i}: {section} to research team")
+            logger.info(f"Sending section {i}: {section} to research team")
         return Command(goto=[Send("research_team", {"section": s}) for s in sections_list], update={"messages": result})
     elif intro_content:
         # Store introduction while waiting for conclusion
+        logger.info("Introduction written, requesting conclusion")
         # Append to messages to guide the LLM to write conclusion next
         result.append({"role": "user", "content": "Introduction written. Now write a conclusion section."})
         return Command(goto="supervisor", update={"final_report": intro_content, "messages": result})
     elif conclusion_content:
         # Get all sections and combine in proper order: Introduction, Body Sections, Conclusion
+        logger.info("Conclusion written, assembling final report")
         intro = state.get("final_report", "")
         body_sections = "\n\n".join([s.content for s in state["completed_sections"]])
         
@@ -212,6 +230,7 @@ async def supervisor_tools(state: ReportState, config: RunnableConfig)  -> Comma
         return Command(goto="supervisor", update={"final_report": complete_report, "messages": result})
     else:
         # Default case (for search tools, etc.)
+        logger.debug("Processing search tool results")
         return Command(goto="supervisor", update={"messages": result})
 
 async def supervisor_should_continue(state: ReportState) -> Literal["supervisor", "supervisor_tools", END]:
@@ -234,10 +253,10 @@ async def supervisor_should_continue(state: ReportState) -> Literal["supervisor"
 async def research_agent(state: SectionState, config: RunnableConfig):
     """LLM decides whether to call a tool or not"""
 
-    print("research_agent invoked")
-    print("Messages: ", len(state["messages"]))
-    print("Section: ", len(state["section"]))
-    print("Completed sections: ", len(state.get("completed_sections", [])))
+    logger.info("research_agent invoked")
+    logger.debug(f"Messages count: {len(state['messages'])}")
+    logger.debug(f"Section length: {len(state['section'])}")
+    logger.debug(f"Completed sections count: {len(state.get('completed_sections', []))}")
     
     # Get configuration
     configurable = Configuration.from_runnable_config(config)

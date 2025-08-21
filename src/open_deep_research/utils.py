@@ -6,6 +6,7 @@ import concurrent
 import aiohttp
 import httpx
 import time
+import logging
 from typing import List, Optional, Dict, Any, Union
 from urllib.parse import unquote
 
@@ -23,7 +24,18 @@ from langchain_core.tools import tool
 from langsmith import traceable
 
 from open_deep_research.state import Section
-    
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('utils.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 def get_config_value(value):
     """
     Helper function to handle string, dict, and enum cases of configuration values
@@ -109,7 +121,7 @@ def deduplicate_and_format_sources(search_response, max_tokens_per_source=5000, 
             raw_content = source.get('raw_content', '')
             if raw_content is None:
                 raw_content = ''
-                print(f"Warning: No raw_content found for source {source['url']}")
+                logger.warning(f"No raw_content found for source {source['url']}")
             if len(raw_content) > char_limit:
                 raw_content = raw_content[:char_limit] + "... [truncated]"
             formatted_text += f"Full source content limited to {max_tokens_per_source} tokens: {raw_content}\n\n"
@@ -162,9 +174,9 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
                     ]
                 }
     """
-    print(f"Tavily search: Executing {len(search_queries)} queries with max_results={max_results}, topic='{topic}', include_raw_content={include_raw_content}")
+    logger.info(f"Tavily search: Executing {len(search_queries)} queries with max_results={max_results}, topic='{topic}', include_raw_content={include_raw_content}")
     for i, query in enumerate(search_queries):
-        print(f"Tavily search query {i+1}: '{query[:400]}{'...' if len(query) > 400 else ''}'")
+        logger.debug(f"Tavily search query {i+1}: '{query[:400]}{'...' if len(query) > 400 else ''}'")
     
     tavily_async_client = AsyncTavilyClient()
     search_tasks = []
@@ -180,7 +192,7 @@ async def tavily_search_async(search_queries, max_results: int = 5, topic: str =
 
     # Execute all searches concurrently
     search_docs = await asyncio.gather(*search_tasks)
-    print(f"Tavily search: Completed {len(search_docs)} searches")
+    logger.info(f"Tavily search: Completed {len(search_docs)} searches")
     return search_docs
 
 def perplexity_search(search_queries):
@@ -461,7 +473,7 @@ async def exa_search(search_queries, max_characters: Optional[int] = None, num_r
             search_docs.append(result)
         except Exception as e:
             # Handle exceptions gracefully
-            print(f"Error processing query '{query}': {str(e)}")
+            logger.error(f"Error processing query '{query}': {str(e)}")
             # Add a placeholder result for failed queries to maintain index alignment
             search_docs.append({
                 "query": query,
@@ -474,7 +486,7 @@ async def exa_search(search_queries, max_characters: Optional[int] = None, num_r
             
             # Add additional delay if we hit a rate limit error
             if "429" in str(e):
-                print("Rate limit exceeded. Adding additional delay...")
+                logger.warning("Rate limit exceeded. Adding additional delay...")
                 await asyncio.sleep(1.0)  # Add a longer delay if we hit a rate limit
     
     return search_docs
@@ -596,7 +608,7 @@ async def arxiv_search_async(search_queries, load_max_docs=5, get_full_documents
             }
         except Exception as e:
             # Handle exceptions gracefully
-            print(f"Error processing arXiv query '{query}': {str(e)}")
+            logger.error(f"Error processing arXiv query '{query}': {str(e)}")
             return {
                 'query': query,
                 'follow_up_questions': None,
@@ -618,7 +630,7 @@ async def arxiv_search_async(search_queries, load_max_docs=5, get_full_documents
             search_docs.append(result)
         except Exception as e:
             # Handle exceptions gracefully
-            print(f"Error processing arXiv query '{query}': {str(e)}")
+            logger.error(f"Error processing arXiv query '{query}': {str(e)}")
             search_docs.append({
                 'query': query,
                 'follow_up_questions': None,
@@ -630,7 +642,7 @@ async def arxiv_search_async(search_queries, load_max_docs=5, get_full_documents
             
             # Add additional delay if we hit a rate limit error
             if "429" in str(e) or "Too Many Requests" in str(e):
-                print("ArXiv rate limit exceeded. Adding additional delay...")
+                logger.warning("ArXiv rate limit exceeded. Adding additional delay...")
                 await asyncio.sleep(5.0)  # Add a longer delay if we hit a rate limit
     
     return search_docs
@@ -668,7 +680,7 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
     
     async def process_single_query(query):
         try:
-            # print(f"Processing PubMed query: '{query}'")
+            # logger.debug(f"Processing PubMed query: '{query}'")
             
             # Create PubMed wrapper for the query
             wrapper = PubMedAPIWrapper(
@@ -684,7 +696,7 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
             # Use wrapper.lazy_load instead of load to get better visibility
             docs = await loop.run_in_executor(None, lambda: list(wrapper.lazy_load(query)))
             
-            print(f"Query '{query}' returned {len(docs)} results")
+            logger.info(f"Query '{query}' returned {len(docs)} results")
             
             results = []
             # Assign decreasing scores based on the order
@@ -730,9 +742,9 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
         except Exception as e:
             # Handle exceptions with more detailed information
             error_msg = f"Error processing PubMed query '{query}': {str(e)}"
-            print(error_msg)
+            logger.error(error_msg)
             import traceback
-            print(traceback.format_exc())  # Print full traceback for debugging
+            logger.error(traceback.format_exc())  # Log full traceback for debugging
             
             return {
                 'query': query,
@@ -753,7 +765,7 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
         try:
             # Add delay between requests
             if i > 0:  # Don't delay the first request
-                # print(f"Waiting {delay} seconds before next query...")
+                # logger.debug(f"Waiting {delay} seconds before next query...")
                 await asyncio.sleep(delay)
             
             result = await process_single_query(query)
@@ -766,7 +778,7 @@ async def pubmed_search_async(search_queries, top_k_results=5, email=None, api_k
         except Exception as e:
             # Handle exceptions gracefully
             error_msg = f"Error in main loop processing PubMed query '{query}': {str(e)}"
-            print(error_msg)
+            logger.error(error_msg)
             
             search_docs.append({
                 'query': query,
@@ -886,13 +898,13 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                             'start': start_index,
                             'num': num
                         }
-                        print(f"Requesting {num} results for '{query}' from Google API...")
+                        logger.info(f"Requesting {num} results for '{query}' from Google API...")
 
                         async with aiohttp.ClientSession() as session:
                             async with session.get('https://www.googleapis.com/customsearch/v1', params=params) as response:
                                 if response.status != 200:
                                     error_text = await response.text()
-                                    print(f"API error: {response.status}, {error_text}")
+                                    logger.error(f"API error: {response.status}, {error_text}")
                                     break
                                     
                                 data = await response.json()
@@ -919,7 +931,7 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                 else:
                     # Add delay between requests
                     await asyncio.sleep(0.5 + random.random() * 1.5)
-                    print(f"Scraping Google for '{query}'...")
+                    logger.info(f"Scraping Google for '{query}'...")
 
                     # Define scraping function
                     def google_search(query, max_results):
@@ -997,7 +1009,7 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                             return search_results
                                 
                         except Exception as e:
-                            print(f"Error in Google search for '{query}': {str(e)}")
+                            logger.error(f"Error in Google search for '{query}': {str(e)}")
                             return []
                     
                     # Execute search in thread pool
@@ -1046,7 +1058,7 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                                                     # Fallback if we still have decoding issues
                                                     result['raw_content'] = f"[Could not decode content: {str(ude)}]"
                                 except Exception as e:
-                                    print(f"Warning: Failed to fetch content for {url}: {str(e)}")
+                                    logger.warning(f"Failed to fetch content for {url}: {str(e)}")
                                     result['raw_content'] = f"[Error fetching content: {str(e)}]"
                                 return result
                         
@@ -1055,7 +1067,7 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                         
                         updated_results = await asyncio.gather(*fetch_tasks)
                         results = updated_results
-                        print(f"Fetched full content for {len(results)} results")
+                        logger.info(f"Fetched full content for {len(results)} results")
                 
                 return {
                     "query": query,
@@ -1065,7 +1077,7 @@ async def google_search_async(search_queries: Union[str, List[str]], max_results
                     "results": results
                 }
             except Exception as e:
-                print(f"Error in Google search for query '{query}': {str(e)}")
+                logger.error(f"Error in Google search for query '{query}': {str(e)}")
                 return {
                     "query": query,
                     "follow_up_questions": None,
@@ -1175,7 +1187,7 @@ async def duckduckgo_search(search_queries: List[str]):
                         if retry_count > 0:
                             # Random delay with exponential backoff
                             delay = backoff_factor ** retry_count + random.random()
-                            print(f"Retry {retry_count}/{max_retries} for query '{query}' after {delay:.2f}s delay")
+                            logger.info(f"Retry {retry_count}/{max_retries} for query '{query}' after {delay:.2f}s delay")
                             time.sleep(delay)
                             
                             # Add a random element to the query to bypass caching/rate limits
@@ -1209,15 +1221,15 @@ async def duckduckgo_search(search_queries: List[str]):
                     # Store the exception and retry
                     last_exception = e
                     retry_count += 1
-                    print(f"DuckDuckGo search error: {str(e)}. Retrying {retry_count}/{max_retries}")
+                    logger.error(f"DuckDuckGo search error: {str(e)}. Retrying {retry_count}/{max_retries}")
                     
                     # If not a rate limit error, don't retry
                     if "Ratelimit" not in str(e) and retry_count >= 1:
-                        print(f"Non-rate limit error, stopping retries: {str(e)}")
+                        logger.warning(f"Non-rate limit error, stopping retries: {str(e)}")
                         break
             
             # If we reach here, all retries failed
-            print(f"All retries failed for query '{query}': {str(last_exception)}")
+            logger.error(f"All retries failed for query '{query}': {str(last_exception)}")
             # Return empty results but with query info preserved
             return {
                 'query': query,
@@ -1269,8 +1281,8 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
     Returns:
         str: A formatted string of search results
     """
-    print(f"Tavily search tool: Starting search with {len(queries)} queries")
-    print(f"Tavily search tool: Parameters - max_results={max_results}, topic='{topic}'")
+    logger.info(f"Tavily search tool: Starting search with {len(queries)} queries")
+    logger.debug(f"Tavily search tool: Parameters - max_results={max_results}, topic='{topic}'")
     
     # Use tavily_search_async with include_raw_content=True to get content directly
     search_results = await tavily_search_async(
@@ -1291,7 +1303,7 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
             if url not in unique_results:
                 unique_results[url] = result
     
-    print(f"Tavily search tool: Found {len(unique_results)} unique results after deduplication")
+    logger.info(f"Tavily search tool: Found {len(unique_results)} unique results after deduplication")
     
     # Format the unique results
     for i, (url, result) in enumerate(unique_results.items()):
@@ -1303,10 +1315,10 @@ async def tavily_search(queries: List[str], max_results: int = 5, topic: str = "
         formatted_output += "\n\n" + "-" * 80 + "\n"
     
     if unique_results:
-        print(f"Tavily search tool: Returning formatted results with {len(unique_results)} sources")
+        logger.info(f"Tavily search tool: Returning formatted results with {len(unique_results)} sources")
         return formatted_output
     else:
-        print("Tavily search tool: No valid search results found")
+        logger.warning("Tavily search tool: No valid search results found")
         return "No valid search results found. Please try different search queries or use a different search API."
 
 async def select_and_execute_search(search_api: str, query_list: list[str], params_to_pass: dict) -> str:
@@ -1325,7 +1337,7 @@ async def select_and_execute_search(search_api: str, query_list: list[str], para
     """
     if search_api == "tavily":
         # Tavily search tool used with both workflow and agent 
-        print(f"select_and_execute_search: Using Tavily search API with {len(query_list)} queries and params: {params_to_pass}")
+        logger.info(f"select_and_execute_search: Using Tavily search API with {len(query_list)} queries and params: {params_to_pass}")
         return await tavily_search.ainvoke({'queries': query_list}, **params_to_pass)
     elif search_api == "duckduckgo":
         # DuckDuckGo search tool used with both workflow and agent 
